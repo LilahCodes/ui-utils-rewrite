@@ -1,6 +1,27 @@
 package com.ui_utils;
 
+import java.awt.Color;
+import java.awt.Font;
+import java.util.Timer;
+import java.util.TimerTask;
+import java.util.Vector;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JTextField;
+
+import org.jetbrains.annotations.NotNull;
+import org.lwjgl.glfw.GLFW;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.google.common.collect.ImmutableList;
+import com.mojang.serialization.JsonOps;
+
 import it.unimi.dsi.fastutil.ints.Int2ObjectArrayMap;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -14,25 +35,15 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
-import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.c2s.play.ButtonClickC2SPacket;
 import net.minecraft.network.packet.c2s.play.ClickSlotC2SPacket;
 import net.minecraft.network.packet.c2s.play.CloseHandledScreenC2SPacket;
 import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.screen.sync.ItemStackHash;
 import net.minecraft.text.Text;
-import org.jetbrains.annotations.NotNull;
-import org.lwjgl.glfw.GLFW;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import com.ui_utils.mixin.accessor.ClientConnectionAccessor;
-
-import javax.swing.*;
-import java.awt.*;
-import java.util.Objects;
-import java.util.Timer;
-import java.util.TimerTask;
-import java.util.Vector;
+import net.minecraft.text.TextCodecs;
+import net.minecraft.util.Formatting;
 
 public class MainClient implements ClientModInitializer {
     public static Font monospace;
@@ -42,6 +53,7 @@ public class MainClient implements ClientModInitializer {
 
     public static Logger LOGGER = LoggerFactory.getLogger("ui-utils");
     public static MinecraftClient mc = MinecraftClient.getInstance();
+    
     @Override
     public void onInitializeClient() {
         UpdateUtils.checkForUpdates();
@@ -83,7 +95,7 @@ public class MainClient implements ClientModInitializer {
         screen.addDrawableChild(ButtonWidget.builder(Text.of("Close without packet"), (button) -> {
             // closes the current gui without sending a packet to the current server
             mc.setScreen(null);
-        }).width(115).position(5, 5).build());
+        }).size(115, 20).position(5, 5).build());
 
         // register "de-sync" button in all HandledScreens
         screen.addDrawableChild(ButtonWidget.builder(Text.of("De-sync"), (button) -> {
@@ -93,14 +105,14 @@ public class MainClient implements ClientModInitializer {
             } else {
                 LOGGER.warn("Minecraft network handler or player was null while using 'De-sync' in UI Utils.");
             }
-        }).width(115).position(5, 35).build());
+        }).size(115, 20).position(5, 35).build());
 
         // register "send packets" button in all HandledScreens
         screen.addDrawableChild(ButtonWidget.builder(Text.of("Send packets: " + SharedVariables.sendUIPackets), (button) -> {
             // tells the client if it should send any gui related packets
             SharedVariables.sendUIPackets = !SharedVariables.sendUIPackets;
             button.setMessage(Text.of("Send packets: " + SharedVariables.sendUIPackets));
-        }).width(115).position(5, 65).build());
+        }).size(115, 20).position(5, 65).build());
 
         // register "delay packets" button in all HandledScreens
         screen.addDrawableChild(ButtonWidget.builder(Text.of("Delay packets: " + SharedVariables.delayUIPackets), (button) -> {
@@ -116,7 +128,7 @@ public class MainClient implements ClientModInitializer {
                 }
                 SharedVariables.delayedUIPackets.clear();
             }
-        }).width(115).position(5, 95).build());
+        }).size(115, 20).position(5, 95).build());
 
         // register "save gui" button in all HandledScreens
         screen.addDrawableChild(ButtonWidget.builder(Text.of("Save GUI"), (button) -> {
@@ -125,7 +137,7 @@ public class MainClient implements ClientModInitializer {
                 SharedVariables.storedScreen = mc.currentScreen;
                 SharedVariables.storedScreenHandler = mc.player.currentScreenHandler;
             }
-        }).width(115).position(5, 125).build());
+        }).size(115, 20).position(5, 125).build());
 
         // register "disconnect and send packets" button in all HandledScreens
         screen.addDrawableChild(ButtonWidget.builder(Text.of("Disconnect and send packets"), (button) -> {
@@ -140,7 +152,7 @@ public class MainClient implements ClientModInitializer {
                 LOGGER.warn("Minecraft network handler (mc.getNetworkHandler()) is null while client is disconnecting.");
             }
             SharedVariables.delayedUIPackets.clear();
-        }).width(160).position(5, 155).build());
+        }).size(160, 20).position(5, 155).build());
 
         // register "fabricate packet" button in all HandledScreens
         ButtonWidget fabricatePacketButton = ButtonWidget.builder(Text.of("Fabricate packet"), (button) -> {
@@ -264,13 +276,14 @@ public class MainClient implements ClientModInitializer {
                         int timesToSend = Integer.parseInt(timesToSendField.getText());
 
                         if (action != null) {
-                            ClickSlotC2SPacket packet = new ClickSlotC2SPacket(syncId, revision, slot, button0, action, ItemStack.EMPTY, new Int2ObjectArrayMap<>());
+                            ClickSlotC2SPacket packet = new ClickSlotC2SPacket(syncId, revision, (short) slot, (byte) button0, action, new Int2ObjectArrayMap<>(), ItemStackHash.EMPTY);
                             try {
                                 Runnable toRun = getFabricatePacketRunnable(mc, delayBox.isSelected(), packet);
                                 for (int i = 0; i < timesToSend; i++) {
                                     toRun.run();
                                 }
                             } catch (Exception e) {
+                                statusLabel.setVisible(true);
                                 statusLabel.setForeground(Color.RED.darker());
                                 statusLabel.setText("You must be connected to a server!");
                                 MainClient.queueTask(() -> {
@@ -438,7 +451,7 @@ public class MainClient implements ClientModInitializer {
             frame.add(clickSlotButton);
             frame.add(buttonClickButton);
             frame.setVisible(true);
-        }).width(115).position(5, 185).build();
+        }).size(115, 20).position(5, 185).build();
         fabricatePacketButton.active = !MinecraftClient.IS_SYSTEM_MAC;
         screen.addDrawableChild(fabricatePacketButton);
 
@@ -447,12 +460,54 @@ public class MainClient implements ClientModInitializer {
                 if (mc.currentScreen == null) {
                     throw new IllegalStateException("The current minecraft screen (mc.currentScreen) is null");
                 }
-                // fixes #137
-                mc.keyboard.setClipboard(Text.Serialization.toJsonString(mc.currentScreen.getTitle(), Objects.requireNonNull(MinecraftClient.getInstance().getServer()).getRegistryManager()));
-            } catch (IllegalStateException e) {
+                
+                // Updated for 1.21.8 - better registry manager handling with multiple fallbacks
+                try {
+                   // Try server registry manager first (single player/integrated server)
+                    var server = mc.getServer();
+                    if (server != null) {
+                        var result = TextCodecs.CODEC.encodeStart(server.getRegistryManager().getOps(JsonOps.INSTANCE), mc.currentScreen.getTitle());
+                        if (result.result().isPresent()) {
+                            mc.keyboard.setClipboard(result.result().get().toString());
+                        }
+                        return;
+                    }
+                    
+                    // Try world registry manager (multiplayer)
+                    if (mc.world != null && mc.world.getRegistryManager() != null) {
+                        var result = TextCodecs.CODEC.encodeStart(mc.world.getRegistryManager().getOps(JsonOps.INSTANCE), mc.currentScreen.getTitle());
+                        if (result.result().isPresent()) {
+                            mc.keyboard.setClipboard(result.result().get().toString());
+                        }
+                        return;
+                    }
+                    
+                    // Fallback - try to get from network handler if available
+                    if (mc.getNetworkHandler() != null && mc.getNetworkHandler().getRegistryManager() != null) {
+                        var result = TextCodecs.CODEC.encodeStart(mc.getNetworkHandler().getRegistryManager().getOps(JsonOps.INSTANCE), mc.currentScreen.getTitle());
+                    if (result.result().isPresent()) {
+                        mc.keyboard.setClipboard(result.result().get().toString());
+                    }
+                        return;
+                    }
+                    
+                    // If no registry manager is available, show an error message
+                    throw new IllegalStateException("No registry manager available");
+                    
+                } catch (Exception registryException) {
+                    // If all registry manager attempts fail, show error
+                    if (mc.player != null) {
+                        mc.player.sendMessage(Text.literal("Cannot copy GUI title JSON: No registry manager available").formatted(Formatting.RED), false);
+                    }
+                    LOGGER.warn("Cannot copy GUI title JSON: No registry manager available - {}", registryException.getMessage());
+                }
+            } catch (Exception e) {
                 LOGGER.error("Error while copying title JSON to clipboard", e);
+                if (mc.player != null) {
+                    mc.player.sendMessage(Text.literal("Error copying GUI title JSON: " + e.getMessage()).formatted(Formatting.RED), false);
+                }
             }
-        }).width(115).position(5, 215).build());
+        }).size(115, 20).position(5, 215).build());
     }
 
     @NotNull
@@ -471,9 +526,9 @@ public class MainClient implements ClientModInitializer {
         if (delay) {
             toRun = () -> {
                 if (mc.getNetworkHandler() != null) {
-                    mc.getNetworkHandler().sendPacket(packet);
+                    SharedVariables.delayedUIPackets.add(packet);
                 } else {
-                    LOGGER.warn("Minecraft network handler (mc.getNetworkHandler()) is null while sending fabricated packets.");
+                    LOGGER.warn("Minecraft network handler (mc.getNetworkHandler()) is null while queuing delayed packets.");
                 }
             };
         } else {
@@ -483,7 +538,6 @@ public class MainClient implements ClientModInitializer {
                 } else {
                     LOGGER.warn("Minecraft network handler (mc.getNetworkHandler()) is null while sending fabricated packets.");
                 }
-                ((ClientConnectionAccessor) mc.getNetworkHandler().getConnection()).getChannel().writeAndFlush(packet);
             };
         }
         return toRun;
