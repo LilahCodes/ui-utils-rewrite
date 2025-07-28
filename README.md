@@ -1,5 +1,10 @@
 # UI-Utils
 Plugin debugging mod. May be incompatible with mac, needs Fabric API.
+
+> [!IMPORTANT]
+> This is not an official release of ui-utils. Just a fork to hopefully keep updates running quicker, and code a little smoother.<br>
+> This repo may go dead at any time.
+
 ---
 
 # How to use:
