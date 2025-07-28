@@ -27,7 +27,6 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.loader.api.FabricLoader;
-import net.fabricmc.loader.api.metadata.ModMetadata;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
@@ -46,24 +45,29 @@ import net.minecraft.text.TextCodecs;
 import net.minecraft.util.Formatting;
 
 public class MainClient implements ClientModInitializer {
+    // ui styling constants for swing components
     public static Font monospace;
     public static Color darkWhite;
-
+    
+    // keybind for restoring saved gui screens
     public static KeyBinding restoreScreenKey;
-
+    
+    // main logger and minecraft client instance
     public static Logger LOGGER = LoggerFactory.getLogger("ui-utils");
     public static MinecraftClient mc = MinecraftClient.getInstance();
     
     @Override
     public void onInitializeClient() {
+        // check for mod updates on startup
         UpdateUtils.checkForUpdates();
 
-        // register "restore screen" key
-        restoreScreenKey = KeyBindingHelper.registerKeyBinding(new KeyBinding("Restore Screen", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_V, "UI Utils"));
+        // register v key to restore previously saved gui screens
+        restoreScreenKey = KeyBindingHelper.registerKeyBinding(
+            new KeyBinding("Restore Screen", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_V, "UI Utils")
+        );
 
-        // register event for END_CLIENT_TICK
-        ClientTickEvents.END_CLIENT_TICK.register((client) -> {
-            // detect if the "restore screen" keybinding is pressed
+        // handle restore screen key presses each client tick
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (restoreScreenKey.wasPressed()) {
                 if (SharedVariables.storedScreen != null && SharedVariables.storedScreenHandler != null && client.player != null) {
                     client.setScreen(SharedVariables.storedScreen);
@@ -72,7 +76,7 @@ public class MainClient implements ClientModInitializer {
             }
         });
 
-        // set java.awt.headless to false if os is not mac (allows for JFrame guis to be used)
+        // setup swing components if not on mac since awt headless causes issues
         if (!MinecraftClient.IS_SYSTEM_MAC) {
             System.setProperty("java.awt.headless", "false");
             monospace = new Font(Font.MONOSPACED, Font.PLAIN, 10);
@@ -80,49 +84,42 @@ public class MainClient implements ClientModInitializer {
         }
     }
 
-    @SuppressWarnings("all")
+    // draws sync id and revision info on screen for debugging
     public static void createText(MinecraftClient mc, DrawContext context, TextRenderer textRenderer) {
-        // display the current gui's sync id, revision
         context.drawText(textRenderer, "Sync Id: " + mc.player.currentScreenHandler.syncId, 200, 5, Color.WHITE.getRGB(), false);
         context.drawText(textRenderer, "Revision: " + mc.player.currentScreenHandler.getRevision(), 200, 35, Color.WHITE.getRGB(), false);
     }
 
-    // bro are you ever going to clean this up?
-    // this code is very messy, ill clean it up if you dont
-    // -- MrBreakNFix
+    // adds all the ui utility buttons to handled screens
     public static void createWidgets(MinecraftClient mc, Screen screen) {
-        // register "close without packet" button in all HandledScreens
-        screen.addDrawableChild(ButtonWidget.builder(Text.of("Close without packet"), (button) -> {
-            // closes the current gui without sending a packet to the current server
-            mc.setScreen(null);
-        }).size(115, 20).position(5, 5).build());
+        // button to close gui without sending close packet to server
+        screen.addDrawableChild(ButtonWidget.builder(Text.of("Close without packet"), button -> 
+            mc.setScreen(null)
+        ).size(115, 20).position(5, 5).build());
 
-        // register "de-sync" button in all HandledScreens
-        screen.addDrawableChild(ButtonWidget.builder(Text.of("De-sync"), (button) -> {
-            // keeps the current gui open client-side and closed server-side
+        // button to close gui server side while keeping it open client side
+        screen.addDrawableChild(ButtonWidget.builder(Text.of("De-sync"), button -> {
             if (mc.getNetworkHandler() != null && mc.player != null) {
                 mc.getNetworkHandler().sendPacket(new CloseHandledScreenC2SPacket(mc.player.currentScreenHandler.syncId));
             } else {
-                LOGGER.warn("Minecraft network handler or player was null while using 'De-sync' in UI Utils.");
+                LOGGER.warn("network handler or player null during desync");
             }
         }).size(115, 20).position(5, 35).build());
 
-        // register "send packets" button in all HandledScreens
-        screen.addDrawableChild(ButtonWidget.builder(Text.of("Send packets: " + SharedVariables.sendUIPackets), (button) -> {
-            // tells the client if it should send any gui related packets
+        // toggle whether gui packets should be sent or blocked
+        screen.addDrawableChild(ButtonWidget.builder(Text.of("Send packets: " + SharedVariables.sendUIPackets), button -> {
             SharedVariables.sendUIPackets = !SharedVariables.sendUIPackets;
             button.setMessage(Text.of("Send packets: " + SharedVariables.sendUIPackets));
         }).size(115, 20).position(5, 65).build());
 
-        // register "delay packets" button in all HandledScreens
-        screen.addDrawableChild(ButtonWidget.builder(Text.of("Delay packets: " + SharedVariables.delayUIPackets), (button) -> {
-            // toggles a setting to delay all gui related packets to be used later when turning this setting off
+        // toggle packet delay mode and send all delayed packets when turned off
+        screen.addDrawableChild(ButtonWidget.builder(Text.of("Delay packets: " + SharedVariables.delayUIPackets), button -> {
             SharedVariables.delayUIPackets = !SharedVariables.delayUIPackets;
             button.setMessage(Text.of("Delay packets: " + SharedVariables.delayUIPackets));
+            
+            // send all delayed packets when turning delay mode off
             if (!SharedVariables.delayUIPackets && !SharedVariables.delayedUIPackets.isEmpty() && mc.getNetworkHandler() != null) {
-                for (Packet<?> packet : SharedVariables.delayedUIPackets) {
-                    mc.getNetworkHandler().sendPacket(packet);
-                }
+                SharedVariables.delayedUIPackets.forEach(mc.getNetworkHandler()::sendPacket);
                 if (mc.player != null) {
                     mc.player.sendMessage(Text.of("Sent " + SharedVariables.delayedUIPackets.size() + " packets."), false);
                 }
@@ -130,388 +127,187 @@ public class MainClient implements ClientModInitializer {
             }
         }).size(115, 20).position(5, 95).build());
 
-        // register "save gui" button in all HandledScreens
-        screen.addDrawableChild(ButtonWidget.builder(Text.of("Save GUI"), (button) -> {
-            // saves the current gui to a variable to be accessed later
+        // save current gui and screen handler for later restoration
+        screen.addDrawableChild(ButtonWidget.builder(Text.of("Save GUI"), button -> {
             if (mc.player != null) {
                 SharedVariables.storedScreen = mc.currentScreen;
                 SharedVariables.storedScreenHandler = mc.player.currentScreenHandler;
             }
         }).size(115, 20).position(5, 125).build());
 
-        // register "disconnect and send packets" button in all HandledScreens
-        screen.addDrawableChild(ButtonWidget.builder(Text.of("Disconnect and send packets"), (button) -> {
-            // sends all "delayed" gui related packets before disconnecting, use: potential race conditions on non-vanilla servers
+        // send all delayed packets then disconnect from server
+        screen.addDrawableChild(ButtonWidget.builder(Text.of("Disconnect and send packets"), button -> {
             SharedVariables.delayUIPackets = false;
             if (mc.getNetworkHandler() != null) {
-                for (Packet<?> packet : SharedVariables.delayedUIPackets) {
-                    mc.getNetworkHandler().sendPacket(packet);
-                }
+                SharedVariables.delayedUIPackets.forEach(mc.getNetworkHandler()::sendPacket);
                 mc.getNetworkHandler().getConnection().disconnect(Text.of("Disconnecting (UI-UTILS)"));
             } else {
-                LOGGER.warn("Minecraft network handler (mc.getNetworkHandler()) is null while client is disconnecting.");
+                LOGGER.warn("network handler null during disconnect");
             }
             SharedVariables.delayedUIPackets.clear();
         }).size(160, 20).position(5, 155).build());
 
-        // register "fabricate packet" button in all HandledScreens
-        ButtonWidget fabricatePacketButton = ButtonWidget.builder(Text.of("Fabricate packet"), (button) -> {
-            // creates a gui allowing you to fabricate packets
+        // button to open packet fabrication gui
+        ButtonWidget fabricateButton = ButtonWidget.builder(Text.of("Fabricate packet"), button -> 
+            createPacketSelectionGui()
+        ).size(115, 20).position(5, 185).build();
+        fabricateButton.active = !MinecraftClient.IS_SYSTEM_MAC; // disabled on mac due to awt issues
+        screen.addDrawableChild(fabricateButton);
 
-            JFrame frame = new JFrame("Choose Packet");
-            frame.setBounds(0, 0, 450, 100);
-            frame.setResizable(false);
-            frame.setLocationRelativeTo(null);
-            frame.setLayout(null);
-
-            JButton clickSlotButton = getPacketOptionButton("Click Slot");
-            clickSlotButton.setBounds(100, 25, 110, 20);
-            clickSlotButton.addActionListener((event) -> {
-                // im too lazy to comment everything here just read the code yourself
-                frame.setVisible(false);
-
-                JFrame clickSlotFrame = new JFrame("Click Slot Packet");
-                clickSlotFrame.setBounds(0, 0, 450, 300);
-                clickSlotFrame.setResizable(false);
-                clickSlotFrame.setLocationRelativeTo(null);
-                clickSlotFrame.setLayout(null);
-
-                JLabel syncIdLabel = new JLabel("Sync Id:");
-                syncIdLabel.setFocusable(false);
-                syncIdLabel.setFont(monospace);
-                syncIdLabel.setBounds(25, 25, 100, 20);
-
-                JLabel revisionLabel = new JLabel("Revision:");
-                revisionLabel.setFocusable(false);
-                revisionLabel.setFont(monospace);
-                revisionLabel.setBounds(25, 50, 100, 20);
-
-                JLabel slotLabel = new JLabel("Slot:");
-                slotLabel.setFocusable(false);
-                slotLabel.setFont(monospace);
-                slotLabel.setBounds(25, 75, 100, 20);
-
-                JLabel buttonLabel = new JLabel("Button:");
-                buttonLabel.setFocusable(false);
-                buttonLabel.setFont(monospace);
-                buttonLabel.setBounds(25, 100, 100, 20);
-
-                JLabel actionLabel = new JLabel("Action:");
-                actionLabel.setFocusable(false);
-                actionLabel.setFont(monospace);
-                actionLabel.setBounds(25, 125, 100, 20);
-
-                JLabel timesToSendLabel = new JLabel("Times to send:");
-                timesToSendLabel.setFocusable(false);
-                timesToSendLabel.setFont(monospace);
-                timesToSendLabel.setBounds(25, 190, 100, 20);
-
-                JTextField syncIdField = new JTextField(1);
-                syncIdField.setFont(monospace);
-                syncIdField.setBounds(125, 25, 100, 20);
-
-                JTextField revisionField = new JTextField(1);
-                revisionField.setFont(monospace);
-                revisionField.setBounds(125, 50, 100, 20);
-
-                JTextField slotField = new JTextField(1);
-                slotField.setFont(monospace);
-                slotField.setBounds(125, 75, 100, 20);
-
-                JTextField buttonField = new JTextField(1);
-                buttonField.setFont(monospace);
-                buttonField.setBounds(125, 100, 100, 20);
-
-                JComboBox<String> actionField = new JComboBox<>(new Vector<>(ImmutableList.of(
-                        "PICKUP",
-                        "QUICK_MOVE",
-                        "SWAP",
-                        "CLONE",
-                        "THROW",
-                        "QUICK_CRAFT",
-                        "PICKUP_ALL"
-                )));
-                actionField.setFocusable(false);
-                actionField.setEditable(false);
-                actionField.setBorder(BorderFactory.createEmptyBorder());
-                actionField.setBackground(darkWhite);
-                actionField.setFont(monospace);
-                actionField.setBounds(125, 125, 100, 20);
-
-                JLabel statusLabel = new JLabel();
-                statusLabel.setVisible(false);
-                statusLabel.setFocusable(false);
-                statusLabel.setFont(monospace);
-                statusLabel.setBounds(210, 150, 190, 20);
-
-                JCheckBox delayBox = new JCheckBox("Delay");
-                delayBox.setBounds(115, 150, 85, 20);
-                delayBox.setSelected(false);
-                delayBox.setFont(monospace);
-                delayBox.setFocusable(false);
-
-                JTextField timesToSendField = new JTextField("1");
-                timesToSendField.setFont(monospace);
-                timesToSendField.setBounds(125, 190, 100, 20);
-
-                JButton sendButton = new JButton("Send");
-                sendButton.setFocusable(false);
-                sendButton.setBounds(25, 150, 75, 20);
-                sendButton.setBorder(BorderFactory.createEtchedBorder());
-                sendButton.setBackground(darkWhite);
-                sendButton.setFont(monospace);
-                sendButton.addActionListener((event0) -> {
-                    if (
-                            MainClient.isInteger(syncIdField.getText()) &&
-                                    MainClient.isInteger(revisionField.getText()) &&
-                                    MainClient.isInteger(slotField.getText()) &&
-                                    MainClient.isInteger(buttonField.getText()) &&
-                                    MainClient.isInteger(timesToSendField.getText()) &&
-                                    actionField.getSelectedItem() != null) {
-                        int syncId = Integer.parseInt(syncIdField.getText());
-                        int revision = Integer.parseInt(revisionField.getText());
-                        int slot = Integer.parseInt(slotField.getText());
-                        int button0 = Integer.parseInt(buttonField.getText());
-                        SlotActionType action = MainClient.stringToSlotActionType(actionField.getSelectedItem().toString());
-                        int timesToSend = Integer.parseInt(timesToSendField.getText());
-
-                        if (action != null) {
-                            ClickSlotC2SPacket packet = new ClickSlotC2SPacket(syncId, revision, (short) slot, (byte) button0, action, new Int2ObjectArrayMap<>(), ItemStackHash.EMPTY);
-                            try {
-                                Runnable toRun = getFabricatePacketRunnable(mc, delayBox.isSelected(), packet);
-                                for (int i = 0; i < timesToSend; i++) {
-                                    toRun.run();
-                                }
-                            } catch (Exception e) {
-                                statusLabel.setVisible(true);
-                                statusLabel.setForeground(Color.RED.darker());
-                                statusLabel.setText("You must be connected to a server!");
-                                MainClient.queueTask(() -> {
-                                    statusLabel.setVisible(false);
-                                    statusLabel.setText("");
-                                }, 1500L);
-                                return;
-                            }
-                            statusLabel.setVisible(true);
-                            statusLabel.setForeground(Color.GREEN.darker());
-                            statusLabel.setText("Sent successfully!");
-                            MainClient.queueTask(() -> {
-                                statusLabel.setVisible(false);
-                                statusLabel.setText("");
-                            }, 1500L);
-                        } else {
-                            statusLabel.setVisible(true);
-                            statusLabel.setForeground(Color.RED.darker());
-                            statusLabel.setText("Invalid arguments!");
-                            MainClient.queueTask(() -> {
-                                statusLabel.setVisible(false);
-                                statusLabel.setText("");
-                            }, 1500L);
-                        }
-                    } else {
-                        statusLabel.setVisible(true);
-                        statusLabel.setForeground(Color.RED.darker());
-                        statusLabel.setText("Invalid arguments!");
-                        MainClient.queueTask(() -> {
-                            statusLabel.setVisible(false);
-                            statusLabel.setText("");
-                        }, 1500L);
-                    }
-                });
-
-                clickSlotFrame.add(syncIdLabel);
-                clickSlotFrame.add(revisionLabel);
-                clickSlotFrame.add(slotLabel);
-                clickSlotFrame.add(buttonLabel);
-                clickSlotFrame.add(actionLabel);
-                clickSlotFrame.add(timesToSendLabel);
-                clickSlotFrame.add(syncIdField);
-                clickSlotFrame.add(revisionField);
-                clickSlotFrame.add(slotField);
-                clickSlotFrame.add(buttonField);
-                clickSlotFrame.add(actionField);
-                clickSlotFrame.add(sendButton);
-                clickSlotFrame.add(statusLabel);
-                clickSlotFrame.add(delayBox);
-                clickSlotFrame.add(timesToSendField);
-                clickSlotFrame.setVisible(true);
-            });
-
-            JButton buttonClickButton = getPacketOptionButton("Button Click");
-            buttonClickButton.setBounds(250, 25, 110, 20);
-            buttonClickButton.addActionListener((event) -> {
-                frame.setVisible(false);
-
-                JFrame buttonClickFrame = new JFrame("Button Click Packet");
-                buttonClickFrame.setBounds(0, 0, 450, 250);
-                buttonClickFrame.setResizable(false);
-                buttonClickFrame.setLocationRelativeTo(null);
-                buttonClickFrame.setLayout(null);
-
-                JLabel syncIdLabel = new JLabel("Sync Id:");
-                syncIdLabel.setFocusable(false);
-                syncIdLabel.setFont(monospace);
-                syncIdLabel.setBounds(25, 25, 100, 20);
-
-                JLabel buttonIdLabel = new JLabel("Button Id:");
-                buttonIdLabel.setFocusable(false);
-                buttonIdLabel.setFont(monospace);
-                buttonIdLabel.setBounds(25, 50, 100, 20);
-
-                JTextField syncIdField = new JTextField(1);
-                syncIdField.setFont(monospace);
-                syncIdField.setBounds(125, 25, 100, 20);
-
-                JTextField buttonIdField = new JTextField(1);
-                buttonIdField.setFont(monospace);
-                buttonIdField.setBounds(125, 50, 100, 20);
-
-                JLabel statusLabel = new JLabel();
-                statusLabel.setVisible(false);
-                statusLabel.setFocusable(false);
-                statusLabel.setFont(monospace);
-                statusLabel.setBounds(210, 95, 190, 20);
-
-                JCheckBox delayBox = new JCheckBox("Delay");
-                delayBox.setBounds(115, 95, 85, 20);
-                delayBox.setSelected(false);
-                delayBox.setFont(monospace);
-                delayBox.setFocusable(false);
-
-                JLabel timesToSendLabel = new JLabel("Times to send:");
-                timesToSendLabel.setFocusable(false);
-                timesToSendLabel.setFont(monospace);
-                timesToSendLabel.setBounds(25, 130, 100, 20);
-
-                JTextField timesToSendField = new JTextField("1");
-                timesToSendField.setFont(monospace);
-                timesToSendField.setBounds(125, 130, 100, 20);
-
-                JButton sendButton = new JButton("Send");
-                sendButton.setFocusable(false);
-                sendButton.setBounds(25, 95, 75, 20);
-                sendButton.setBorder(BorderFactory.createEtchedBorder());
-                sendButton.setBackground(darkWhite);
-                sendButton.setFont(monospace);
-                sendButton.addActionListener((event0) -> {
-                    if (
-                            MainClient.isInteger(syncIdField.getText()) &&
-                            MainClient.isInteger(buttonIdField.getText()) &&
-                            MainClient.isInteger(timesToSendField.getText())) {
-                        int syncId = Integer.parseInt(syncIdField.getText());
-                        int buttonId = Integer.parseInt(buttonIdField.getText());
-                        int timesToSend = Integer.parseInt(timesToSendField.getText());
-
-                        ButtonClickC2SPacket packet = new ButtonClickC2SPacket(syncId, buttonId);
-                        try {
-                            Runnable toRun = getFabricatePacketRunnable(mc, delayBox.isSelected(), packet);
-                            for (int i = 0; i < timesToSend; i++) {
-                                toRun.run();
-                            }
-                        } catch (Exception e) {
-                            statusLabel.setVisible(true);
-                            statusLabel.setForeground(Color.RED.darker());
-                            statusLabel.setText("You must be connected to a server!");
-                            MainClient.queueTask(() -> {
-                                statusLabel.setVisible(false);
-                                statusLabel.setText("");
-                            }, 1500L);
-                            return;
-                        }
-                        statusLabel.setVisible(true);
-                        statusLabel.setForeground(Color.GREEN.darker());
-                        statusLabel.setText("Sent successfully!");
-                        MainClient.queueTask(() -> {
-                            statusLabel.setVisible(false);
-                            statusLabel.setText("");
-                        }, 1500L);
-                    } else {
-                        statusLabel.setVisible(true);
-                        statusLabel.setForeground(Color.RED.darker());
-                        statusLabel.setText("Invalid arguments!");
-                        MainClient.queueTask(() -> {
-                            statusLabel.setVisible(false);
-                            statusLabel.setText("");
-                        }, 1500L);
-                    }
-                });
-
-                buttonClickFrame.add(syncIdLabel);
-                buttonClickFrame.add(buttonIdLabel);
-                buttonClickFrame.add(syncIdField);
-                buttonClickFrame.add(timesToSendLabel);
-                buttonClickFrame.add(buttonIdField);
-                buttonClickFrame.add(sendButton);
-                buttonClickFrame.add(statusLabel);
-                buttonClickFrame.add(delayBox);
-                buttonClickFrame.add(timesToSendField);
-                buttonClickFrame.setVisible(true);
-            });
-
-            frame.add(clickSlotButton);
-            frame.add(buttonClickButton);
-            frame.setVisible(true);
-        }).size(115, 20).position(5, 185).build();
-        fabricatePacketButton.active = !MinecraftClient.IS_SYSTEM_MAC;
-        screen.addDrawableChild(fabricatePacketButton);
-
-        screen.addDrawableChild(ButtonWidget.builder(Text.of("Copy GUI Title JSON"), (button) -> {
+        // copy current gui title as json to clipboard
+        screen.addDrawableChild(ButtonWidget.builder(Text.of("Copy GUI Title JSON"), button -> {
             try {
                 if (mc.currentScreen == null) {
-                    throw new IllegalStateException("The current minecraft screen (mc.currentScreen) is null");
+                    throw new IllegalStateException("current screen is null");
                 }
                 
-                // Updated for 1.21.8 - better registry manager handling with multiple fallbacks
-                try {
-                   // Try server registry manager first (single player/integrated server)
-                    var server = mc.getServer();
-                    if (server != null) {
-                        var result = TextCodecs.CODEC.encodeStart(server.getRegistryManager().getOps(JsonOps.INSTANCE), mc.currentScreen.getTitle());
-                        if (result.result().isPresent()) {
-                            mc.keyboard.setClipboard(result.result().get().toString());
-                        }
-                        return;
-                    }
-                    
-                    // Try world registry manager (multiplayer)
-                    if (mc.world != null && mc.world.getRegistryManager() != null) {
-                        var result = TextCodecs.CODEC.encodeStart(mc.world.getRegistryManager().getOps(JsonOps.INSTANCE), mc.currentScreen.getTitle());
-                        if (result.result().isPresent()) {
-                            mc.keyboard.setClipboard(result.result().get().toString());
-                        }
-                        return;
-                    }
-                    
-                    // Fallback - try to get from network handler if available
-                    if (mc.getNetworkHandler() != null && mc.getNetworkHandler().getRegistryManager() != null) {
-                        var result = TextCodecs.CODEC.encodeStart(mc.getNetworkHandler().getRegistryManager().getOps(JsonOps.INSTANCE), mc.currentScreen.getTitle());
+                // try to get registry manager from various sources
+                var registryManager = getRegistryManager();
+                if (registryManager != null) {
+                    var result = TextCodecs.CODEC.encodeStart(registryManager.getOps(JsonOps.INSTANCE), mc.currentScreen.getTitle());
                     if (result.result().isPresent()) {
                         mc.keyboard.setClipboard(result.result().get().toString());
-                    }
                         return;
                     }
-                    
-                    // If no registry manager is available, show an error message
-                    throw new IllegalStateException("No registry manager available");
-                    
-                } catch (Exception registryException) {
-                    // If all registry manager attempts fail, show error
-                    if (mc.player != null) {
-                        mc.player.sendMessage(Text.literal("Cannot copy GUI title JSON: No registry manager available").formatted(Formatting.RED), false);
-                    }
-                    LOGGER.warn("Cannot copy GUI title JSON: No registry manager available - {}", registryException.getMessage());
                 }
+                
+                throw new IllegalStateException("no registry manager available");
+                
             } catch (Exception e) {
-                LOGGER.error("Error while copying title JSON to clipboard", e);
+                LOGGER.error("error copying title json", e);
                 if (mc.player != null) {
-                    mc.player.sendMessage(Text.literal("Error copying GUI title JSON: " + e.getMessage()).formatted(Formatting.RED), false);
+                    mc.player.sendMessage(Text.literal("error copying gui title json: " + e.getMessage()).formatted(Formatting.RED), false);
                 }
             }
         }).size(115, 20).position(5, 215).build());
     }
 
+    // tries to get registry manager from server world or network handler
+    private static net.minecraft.registry.DynamicRegistryManager getRegistryManager() {
+        var server = mc.getServer();
+        if (server != null) return server.getRegistryManager();
+        
+        if (mc.world != null && mc.world.getRegistryManager() != null) return mc.world.getRegistryManager();
+        
+        if (mc.getNetworkHandler() != null && mc.getNetworkHandler().getRegistryManager() != null) {
+            return mc.getNetworkHandler().getRegistryManager();
+        }
+        
+        return null;
+    }
+
+    // creates the main packet selection gui window
+    private static void createPacketSelectionGui() {
+        JFrame frame = new JFrame("Choose Packet");
+        frame.setBounds(0, 0, 450, 100);
+        frame.setResizable(false);
+        frame.setLocationRelativeTo(null);
+        frame.setLayout(null);
+
+        // button to open click slot packet gui
+        JButton clickSlotButton = createPacketButton("Click Slot");
+        clickSlotButton.setBounds(100, 25, 110, 20);
+        clickSlotButton.addActionListener(e -> {
+            frame.setVisible(false);
+            createClickSlotGui();
+        });
+
+        // button to open button click packet gui
+        JButton buttonClickButton = createPacketButton("Button Click");
+        buttonClickButton.setBounds(250, 25, 110, 20);
+        buttonClickButton.addActionListener(e -> {
+            frame.setVisible(false);
+            createButtonClickGui();
+        });
+
+        frame.add(clickSlotButton);
+        frame.add(buttonClickButton);
+        frame.setVisible(true);
+    }
+
+    // creates gui for fabricating click slot packets
+    private static void createClickSlotGui() {
+        JFrame frame = new JFrame("Click Slot Packet");
+        frame.setBounds(0, 0, 450, 300);
+        frame.setResizable(false);
+        frame.setLocationRelativeTo(null);
+        frame.setLayout(null);
+
+        // input fields for packet parameters
+        JTextField syncIdField = createTextField(125, 25);
+        JTextField revisionField = createTextField(125, 50);
+        JTextField slotField = createTextField(125, 75);
+        JTextField buttonField = createTextField(125, 100);
+        JTextField timesToSendField = new JTextField("1");
+        timesToSendField.setFont(monospace);
+        timesToSendField.setBounds(125, 190, 100, 20);
+
+        // dropdown for slot action types
+        JComboBox<String> actionField = new JComboBox<>(new Vector<>(ImmutableList.of(
+            "PICKUP", "QUICK_MOVE", "SWAP", "CLONE", "THROW", "QUICK_CRAFT", "PICKUP_ALL"
+        )));
+        styleComboBox(actionField, 125, 125);
+
+        // checkbox to delay packet sending
+        JCheckBox delayBox = createCheckBox("Delay", 115, 150);
+        
+        // status label for feedback
+        JLabel statusLabel = createStatusLabel(210, 150);
+
+        // send button to create and send the packet
+        JButton sendButton = createSendButton(25, 150);
+        sendButton.addActionListener(e -> {
+            if (validateClickSlotInputs(syncIdField, revisionField, slotField, buttonField, timesToSendField, actionField)) {
+                sendClickSlotPackets(syncIdField, revisionField, slotField, buttonField, actionField, delayBox, timesToSendField, statusLabel);
+            } else {
+                showError(statusLabel, "invalid arguments");
+            }
+        });
+
+        // add all components to frame
+        addClickSlotComponents(frame, syncIdField, revisionField, slotField, buttonField, actionField, delayBox, timesToSendField, sendButton, statusLabel);
+        frame.setVisible(true);
+    }
+
+    // creates gui for fabricating button click packets
+    private static void createButtonClickGui() {
+        JFrame frame = new JFrame("Button Click Packet");
+        frame.setBounds(0, 0, 450, 250);
+        frame.setResizable(false);
+        frame.setLocationRelativeTo(null);
+        frame.setLayout(null);
+
+        // input fields for packet parameters
+        JTextField syncIdField = createTextField(125, 25);
+        JTextField buttonIdField = createTextField(125, 50);
+        JTextField timesToSendField = new JTextField("1");
+        timesToSendField.setFont(monospace);
+        timesToSendField.setBounds(125, 130, 100, 20);
+
+        // checkbox to delay packet sending
+        JCheckBox delayBox = createCheckBox("Delay", 115, 95);
+        
+        // status label for feedback
+        JLabel statusLabel = createStatusLabel(210, 95);
+
+        // send button to create and send the packet
+        JButton sendButton = createSendButton(25, 95);
+        sendButton.addActionListener(e -> {
+            if (validateButtonClickInputs(syncIdField, buttonIdField, timesToSendField)) {
+                sendButtonClickPackets(syncIdField, buttonIdField, delayBox, timesToSendField, statusLabel);
+            } else {
+                showError(statusLabel, "invalid arguments");
+            }
+        });
+
+        // add all components to frame
+        addButtonClickComponents(frame, syncIdField, buttonIdField, timesToSendField, delayBox, sendButton, statusLabel);
+        frame.setVisible(true);
+    }
+
+    // helper method to create styled packet option buttons
     @NotNull
-    private static JButton getPacketOptionButton(String label) {
+    private static JButton createPacketButton(String label) {
         JButton button = new JButton(label);
         button.setFocusable(false);
         button.setBorder(BorderFactory.createEtchedBorder());
@@ -520,29 +316,214 @@ public class MainClient implements ClientModInitializer {
         return button;
     }
 
+    // helper method to create styled text fields
+    private static JTextField createTextField(int x, int y) {
+        JTextField field = new JTextField(1);
+        field.setFont(monospace);
+        field.setBounds(x, y, 100, 20);
+        return field;
+    }
+
+    // helper method to create styled combo boxes
+    private static void styleComboBox(JComboBox<String> comboBox, int x, int y) {
+        comboBox.setFocusable(false);
+        comboBox.setEditable(false);
+        comboBox.setBorder(BorderFactory.createEmptyBorder());
+        comboBox.setBackground(darkWhite);
+        comboBox.setFont(monospace);
+        comboBox.setBounds(x, y, 100, 20);
+    }
+
+    // helper method to create styled checkboxes
+    private static JCheckBox createCheckBox(String text, int x, int y) {
+        JCheckBox checkBox = new JCheckBox(text);
+        checkBox.setBounds(x, y, 85, 20);
+        checkBox.setSelected(false);
+        checkBox.setFont(monospace);
+        checkBox.setFocusable(false);
+        return checkBox;
+    }
+
+    // helper method to create status labels
+    private static JLabel createStatusLabel(int x, int y) {
+        JLabel label = new JLabel();
+        label.setVisible(false);
+        label.setFocusable(false);
+        label.setFont(monospace);
+        label.setBounds(x, y, 190, 20);
+        return label;
+    }
+
+    // helper method to create send buttons
+    private static JButton createSendButton(int x, int y) {
+        JButton button = new JButton("Send");
+        button.setFocusable(false);
+        button.setBounds(x, y, 75, 20);
+        button.setBorder(BorderFactory.createEtchedBorder());
+        button.setBackground(darkWhite);
+        button.setFont(monospace);
+        return button;
+    }
+
+    // validates click slot packet input fields
+    private static boolean validateClickSlotInputs(JTextField syncId, JTextField revision, JTextField slot, 
+                                                  JTextField button, JTextField times, JComboBox<String> action) {
+        return isInteger(syncId.getText()) && isInteger(revision.getText()) && 
+               isInteger(slot.getText()) && isInteger(button.getText()) && 
+               isInteger(times.getText()) && action.getSelectedItem() != null;
+    }
+
+    // validates button click packet input fields
+    private static boolean validateButtonClickInputs(JTextField syncId, JTextField buttonId, JTextField times) {
+        return isInteger(syncId.getText()) && isInteger(buttonId.getText()) && isInteger(times.getText());
+    }
+
+    // sends click slot packets based on input parameters
+    private static void sendClickSlotPackets(JTextField syncIdField, JTextField revisionField, JTextField slotField,
+                                           JTextField buttonField, JComboBox<String> actionField, JCheckBox delayBox,
+                                           JTextField timesToSendField, JLabel statusLabel) {
+        try {
+            int syncId = Integer.parseInt(syncIdField.getText());
+            int revision = Integer.parseInt(revisionField.getText());
+            int slot = Integer.parseInt(slotField.getText());
+            int button = Integer.parseInt(buttonField.getText());
+            SlotActionType action = stringToSlotActionType(actionField.getSelectedItem().toString());
+            int timesToSend = Integer.parseInt(timesToSendField.getText());
+
+            if (action != null) {
+                ClickSlotC2SPacket packet = new ClickSlotC2SPacket(syncId, revision, (short) slot, (byte) button, action, 
+                                                                   new Int2ObjectArrayMap<>(), ItemStackHash.EMPTY);
+                Runnable sender = createPacketSender(delayBox.isSelected(), packet);
+                
+                for (int i = 0; i < timesToSend; i++) {
+                    sender.run();
+                }
+                
+                showSuccess(statusLabel);
+            } else {
+                showError(statusLabel, "invalid action type");
+            }
+        } catch (Exception e) {
+            showError(statusLabel, "you must be connected to a server");
+        }
+    }
+
+    // sends button click packets based on input parameters
+    private static void sendButtonClickPackets(JTextField syncIdField, JTextField buttonIdField, JCheckBox delayBox,
+                                             JTextField timesToSendField, JLabel statusLabel) {
+        try {
+            int syncId = Integer.parseInt(syncIdField.getText());
+            int buttonId = Integer.parseInt(buttonIdField.getText());
+            int timesToSend = Integer.parseInt(timesToSendField.getText());
+
+            ButtonClickC2SPacket packet = new ButtonClickC2SPacket(syncId, buttonId);
+            Runnable sender = createPacketSender(delayBox.isSelected(), packet);
+            
+            for (int i = 0; i < timesToSend; i++) {
+                sender.run();
+            }
+            
+            showSuccess(statusLabel);
+        } catch (Exception e) {
+            showError(statusLabel, "you must be connected to a server");
+        }
+    }
+
+    // creates packet sender runnable that either delays or sends immediately
     @NotNull
-    private static Runnable getFabricatePacketRunnable(MinecraftClient mc, boolean delay, Packet<?> packet) {
-        Runnable toRun;
+    private static Runnable createPacketSender(boolean delay, Packet<?> packet) {
         if (delay) {
-            toRun = () -> {
+            return () -> {
                 if (mc.getNetworkHandler() != null) {
                     SharedVariables.delayedUIPackets.add(packet);
                 } else {
-                    LOGGER.warn("Minecraft network handler (mc.getNetworkHandler()) is null while queuing delayed packets.");
+                    LOGGER.warn("network handler null while queuing delayed packets");
                 }
             };
         } else {
-            toRun = () -> {
+            return () -> {
                 if (mc.getNetworkHandler() != null) {
                     mc.getNetworkHandler().sendPacket(packet);
                 } else {
-                    LOGGER.warn("Minecraft network handler (mc.getNetworkHandler()) is null while sending fabricated packets.");
+                    LOGGER.warn("network handler null while sending packets");
                 }
             };
         }
-        return toRun;
     }
 
+    // shows success message on status label
+    private static void showSuccess(JLabel statusLabel) {
+        statusLabel.setVisible(true);
+        statusLabel.setForeground(Color.GREEN.darker());
+        statusLabel.setText("sent successfully");
+        queueTask(() -> {
+            statusLabel.setVisible(false);
+            statusLabel.setText("");
+        }, 1500L);
+    }
+
+    // shows error message on status label
+    private static void showError(JLabel statusLabel, String message) {
+        statusLabel.setVisible(true);
+        statusLabel.setForeground(Color.RED.darker());
+        statusLabel.setText(message);
+        queueTask(() -> {
+            statusLabel.setVisible(false);
+            statusLabel.setText("");
+        }, 1500L);
+    }
+
+    // adds all components to click slot gui frame
+    private static void addClickSlotComponents(JFrame frame, JTextField syncIdField, JTextField revisionField,
+                                             JTextField slotField, JTextField buttonField, JComboBox<String> actionField,
+                                             JCheckBox delayBox, JTextField timesToSendField, JButton sendButton, JLabel statusLabel) {
+        // labels for input fields
+        frame.add(createLabel("Sync Id:", 25, 25));
+        frame.add(createLabel("Revision:", 25, 50));
+        frame.add(createLabel("Slot:", 25, 75));
+        frame.add(createLabel("Button:", 25, 100));
+        frame.add(createLabel("Action:", 25, 125));
+        frame.add(createLabel("Times to send:", 25, 190));
+        
+        // input components
+        frame.add(syncIdField);
+        frame.add(revisionField);
+        frame.add(slotField);
+        frame.add(buttonField);
+        frame.add(actionField);
+        frame.add(timesToSendField);
+        frame.add(delayBox);
+        frame.add(sendButton);
+        frame.add(statusLabel);
+    }
+
+    // adds all components to button click gui frame
+    private static void addButtonClickComponents(JFrame frame, JTextField syncIdField, JTextField buttonIdField,
+                                               JTextField timesToSendField, JCheckBox delayBox, JButton sendButton, JLabel statusLabel) {
+        // labels for input fields
+        frame.add(createLabel("Sync Id:", 25, 25));
+        frame.add(createLabel("Button Id:", 25, 50));
+        frame.add(createLabel("Times to send:", 25, 130));
+        
+        // input components
+        frame.add(syncIdField);
+        frame.add(buttonIdField);
+        frame.add(timesToSendField);
+        frame.add(delayBox);
+        frame.add(sendButton);
+        frame.add(statusLabel);
+    }
+
+    // helper method to create styled labels
+    private static JLabel createLabel(String text, int x, int y) {
+        JLabel label = new JLabel(text);
+        label.setFocusable(false);
+        label.setFont(monospace);
+        label.setBounds(x, y, 100, 20);
+        return label;
+    }
+
+    // checks if string can be parsed as integer
     public static boolean isInteger(String string) {
         try {
             Integer.parseInt(string);
@@ -552,8 +533,8 @@ public class MainClient implements ClientModInitializer {
         }
     }
 
+    // converts string to corresponding slot action type enum
     public static SlotActionType stringToSlotActionType(String string) {
-        // converts a string to SlotActionType
         return switch (string) {
             case "PICKUP" -> SlotActionType.PICKUP;
             case "QUICK_MOVE" -> SlotActionType.QUICK_MOVE;
@@ -566,21 +547,21 @@ public class MainClient implements ClientModInitializer {
         };
     }
 
+    // schedules task to run on main thread after delay
     public static void queueTask(Runnable runnable, long delayMs) {
-        // queues a task for minecraft to run
         Timer timer = new Timer();
-        TimerTask task = new TimerTask() {
+        timer.schedule(new TimerTask() {
             @Override
             public void run() {
                 MinecraftClient.getInstance().send(runnable);
             }
-        };
-        timer.schedule(task, delayMs);
+        }, delayMs);
     }
 
+    // gets version string for specified mod id
     public static String getModVersion(String modId) {
-        ModMetadata modMetadata = FabricLoader.getInstance().getModContainer(modId).isPresent() ? FabricLoader.getInstance().getModContainer(modId).get().getMetadata() : null;
-
-        return modMetadata != null ? modMetadata.getVersion().getFriendlyString() : "null";
+        return FabricLoader.getInstance().getModContainer(modId)
+                .map(container -> container.getMetadata().getVersion().getFriendlyString())
+                .orElse("null");
     }
 }

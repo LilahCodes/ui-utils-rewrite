@@ -1,11 +1,8 @@
 package com.ui_utils;
 
-import com.google.gson.Gson;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.text.Text;
-import com.ui_utils.gui.UpdateScreen;
+import static com.ui_utils.MainClient.getModVersion;
 
-import java.awt.*;
+import java.awt.Desktop;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -18,7 +15,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.logging.Level;
 
-import static com.ui_utils.MainClient.getModVersion;
+import com.google.gson.Gson;
+import com.ui_utils.gui.UpdateScreen;
+
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.text.Text;
 
 public class UpdateUtils {
 
@@ -33,7 +34,7 @@ public class UpdateUtils {
         Callable<String> task = () -> {
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("https://api.github.com/repos/Coderx-Gamer/ui-utils/releases/latest"))
+                    .uri(URI.create("https://api.github.com/repos/LilahCodes/ui-utils-rewrite/releases/latest"))
                     .header("Accept", "application/vnd.github.v3+json")
                     .build();
 
@@ -71,17 +72,19 @@ public class UpdateUtils {
     }
 
     public static void downloadUpdate() {
-        MainClient.LOGGER.info("Opening download link...");
+        MainClient.LOGGER.info("Opening GitHub latest release page...");
         try {
+            String githubLatestReleaseUrl = "https://github.com/LilahCodes/ui-utils-rewrite/releases/latest";
             if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-                Desktop.getDesktop().browse(new URI("https://ui-utils.com?ref=ingame&cv=" + currentVersion));
+                Desktop.getDesktop().browse(new URI(githubLatestReleaseUrl));
             } else {
                 Runtime runtime = Runtime.getRuntime();
-                runtime.exec(new String[]{"xdg-open", "https://ui-utils.com?ref=ingame&cv=" + currentVersion});
+                runtime.exec(new String[]{"xdg-open", githubLatestReleaseUrl});
             }
         } catch (IOException | URISyntaxException e) {
             MainClient.LOGGER.info(e.getLocalizedMessage(), Level.SEVERE);
         }
         MinecraftClient.getInstance().setScreen(new UpdateScreen(Text.empty()));
     }
+
 }
