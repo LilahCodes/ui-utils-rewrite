@@ -164,7 +164,7 @@ public class MainClient implements ClientModInitializer {
                         var playerChunkPos = mc.player.getChunkPos();
                         int renderDistance = mc.options.getViewDistance().getValue();
                         
-                        // unload chunks in a radius around the player
+                        // unload chunks
                         for (int x = playerChunkPos.x - renderDistance; x <= playerChunkPos.x + renderDistance; x++) {
                             for (int z = playerChunkPos.z - renderDistance; z <= playerChunkPos.z + renderDistance; z++) {
                                 chunkManager.unload(new ChunkPos(x, z));
