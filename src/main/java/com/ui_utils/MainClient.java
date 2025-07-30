@@ -20,7 +20,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.ImmutableList;
-import com.mojang.serialization.JsonOps;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectArrayMap;
 import net.fabricmc.api.ClientModInitializer;
@@ -41,8 +40,8 @@ import net.minecraft.network.packet.c2s.play.CloseHandledScreenC2SPacket;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.screen.sync.ItemStackHash;
 import net.minecraft.text.Text;
-import net.minecraft.text.TextCodecs;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.math.ChunkPos;
 
 public class MainClient implements ClientModInitializer {
     // ui styling constants for swing components
@@ -154,33 +153,45 @@ public class MainClient implements ClientModInitializer {
         fabricateButton.active = !MinecraftClient.IS_SYSTEM_MAC; // disabled on mac due to awt issues
         screen.addDrawableChild(fabricateButton);
 
-        // copy current gui title as json to clipboard
-        screen.addDrawableChild(ButtonWidget.builder(Text.of("Copy GUI Title JSON"), button -> {
-            try {
-                if (mc.currentScreen == null) {
-                    throw new IllegalStateException("current screen is null");
-                }
+        // button to unload chunks around player
+        screen.addDrawableChild(ButtonWidget.builder(Text.of("Unload Chunks"), button -> {
+            if (mc.player != null) {
+                mc.player.sendMessage(Text.literal("Unloading chunks in 3 seconds...").formatted(Formatting.YELLOW), false);
                 
-                // try to get registry manager from various sources
-                var registryManager = getRegistryManager();
-                if (registryManager != null) {
-                    var result = TextCodecs.CODEC.encodeStart(registryManager.getOps(JsonOps.INSTANCE), mc.currentScreen.getTitle());
-                    if (result.result().isPresent()) {
-                        mc.keyboard.setClipboard(result.result().get().toString());
-                        return;
+                queueTask(() -> {
+                    if (mc.world != null && mc.player != null) {
+                        var chunkManager = mc.world.getChunkManager();
+                        var playerChunkPos = mc.player.getChunkPos();
+                        int renderDistance = mc.options.getViewDistance().getValue();
+                        
+                        // unload chunks in a radius around the player
+                        for (int x = playerChunkPos.x - renderDistance; x <= playerChunkPos.x + renderDistance; x++) {
+                            for (int z = playerChunkPos.z - renderDistance; z <= playerChunkPos.z + renderDistance; z++) {
+                                chunkManager.unload(new ChunkPos(x, z));
+                            }
+                        }
+
+                         // timeout the player after unloading chunks
+                        if (mc.getNetworkHandler() != null) {
+                            mc.getNetworkHandler().getConnection().disconnect(Text.of("Timed out (UI Utils)"));
+                            LOGGER.info("player timed out after chunk unloading");
+                        } else {
+                            LOGGER.warn("network handler null during timeout");
+                        }
+                        
+                        mc.player.sendMessage(Text.literal("Chunks unloaded successfully!").formatted(Formatting.GREEN), false);
+                        LOGGER.info("unloaded chunks around player at {}", playerChunkPos);
+                    } else {
+                        LOGGER.warn("world or player null during chunk unloading");
                     }
-                }
-                
-                throw new IllegalStateException("no registry manager available");
-                
-            } catch (Exception e) {
-                LOGGER.error("error copying title json", e);
-                if (mc.player != null) {
-                    mc.player.sendMessage(Text.literal("error copying gui title json: " + e.getMessage()).formatted(Formatting.RED), false);
-                }
+                }, 3000L);
             }
         }).size(115, 20).position(5, 215).build());
+
     }
+
+
+    
 
     // tries to get registry manager from server world or network handler
     private static net.minecraft.registry.DynamicRegistryManager getRegistryManager() {
